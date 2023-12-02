@@ -15,9 +15,10 @@ from util import rle_batch_encode
 class KidneyTraining:
   def __init__(self):
     parser = argparse.ArgumentParser()
-    parser.add_argument('--batch_size', type=int, help="batch_size", default=32)
+    parser.add_argument('--batch_size', type=int, help="batch_size", default=8)
     parser.add_argument('--num_workers', type=int, help="cpu core: help background data loading", default=14)
     parser.add_argument('--epochs', type=int, help="epochs which you iterate", default=50)
+    parser.add_argument('--save_path', type=str, help="where model checkpoint you save", default='./checkpoints/3ch.pth')
     self.opt = parser.parse_args()
 
     self.use_cuda = torch.cuda.is_available()
@@ -42,7 +43,7 @@ class KidneyTraining:
     return model
     
   def initOptimizer(self):
-    return Adam(self.model.parameters(), lr=0.01)
+    return Adam(self.model.parameters())
   
   def initTrainDL(self, val_stride):
     train_ds = KidneyDataset(
@@ -79,7 +80,7 @@ class KidneyTraining:
     train_dl = self.initTrainDL(val_stride=10)
     val_dl = self.initValDL(val_stride=10)
 
-    best_score = 0.0
+    best_loss = 1.0
     self.validation_cadence = 5
     for epoch_ndx in range(1, self.opt.epochs + 1):
         print("Epoch {} of {}, {}/{} batches of size {}*{}\n".format(
@@ -97,29 +98,33 @@ class KidneyTraining:
         if epoch_ndx == 1 or epoch_ndx % self.validation_cadence == 0:
             # if validation is wanted
             self.model.eval()
-            self.doValidation(epoch_ndx, val_dl)
+            dice_loss = self.doValidation(epoch_ndx, val_dl)
+            best_loss = min(dice_loss, best_loss)
+            if(best_loss == dice_loss): torch.save(self.model.state_dict(), self.opt.save_path)
 
   def doTraining(self, epoch_ndx, train_dl):
+    loss_sum = 0
     for batch_ndx, batch_tup in enumerate(train_dl):
       self.optimizer.zero_grad()
       loss_var = self.computeBatchLoss(batch_ndx, batch_tup, train_dl.batch_size)
-      self.writer.add_scalar("Loss/train", loss_var, epoch_ndx)
+      loss_sum += loss_var
       loss_var.backward()
-
       print('Train Batch: {} / {}, dice_score: {}'.format(batch_ndx+1, len(train_dl), -1 * loss_var + 1))
-
       self.optimizer.step()
 
+    self.writer.add_scalar("Loss/train", loss_sum / len(train_dl), epoch_ndx)
     return
   
   def doValidation(self, epoch_ndx, val_dl):
-    for batch_ndx, batch_tup in enumerate(val_dl):
-      
-      loss_var = self.computeBatchLoss(batch_ndx+1, batch_tup, val_dl.batch_size)
-      self.writer.add_scalar("Loss/valid", loss_var, epoch_ndx)
-      print('Valid Batch: {} / {}, dice_score: {}'.format(batch_ndx+1, len(val_dl), -1 * loss_var + 1))
+    loss_sum = 0
+    with torch.no_grad():
+      for batch_ndx, batch_tup in enumerate(val_dl):
+        loss_var = self.computeBatchLoss(batch_ndx+1, batch_tup, val_dl.batch_size)
+        loss_sum += loss_var
+        print('Valid Batch: {} / {}, dice_score: {}'.format(batch_ndx+1, len(val_dl), -1 * loss_var + 1))
 
-    return
+      self.writer.add_scalar("Loss/valid", loss_sum / len(val_dl), epoch_ndx)
+    return loss_sum / len(val_dl)
   
   def dice_score(self, label_bool, pred_t, epsilon=0.001):
     
@@ -133,9 +138,7 @@ class KidneyTraining:
   def computeBatchLoss(self, batch_ndx:int, batch_tup, batch_size, threshold=0.5):
     id, img_t, label_t, rle_y = batch_tup
 
-    img_t.requires_grad_(True)
-    label_t.requires_grad_(True)
-    
+    img_t.requires_grad_(True) 
 
     img_t = img_t.to(self.device, non_blocking=True)
     label_t = label_t.to(self.device, non_blocking=True) 

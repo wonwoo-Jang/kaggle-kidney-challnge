@@ -6,7 +6,6 @@ import os
 import numpy as np
 import pandas as pd
 import random
-import cv2
 
 from torch.utils.data import Dataset
 import torch
@@ -37,7 +36,7 @@ class Kidney:
     # seed = random.randint(1, 2000)
     # torch.manual_seed(seed)
     # crop_size = 256
-    self.transforms = transforms.Compose([transforms.Resize(size=(256, 256), interpolation=Image.NEAREST)])
+    self.transforms = transforms.Compose([transforms.Resize(size=(512, 512), interpolation=Image.NEAREST)])
 
     folder, ind = ('_').join(id.split('_')[:-1]), id.split('_')[-1]
     img_train = Image.open(os.path.join('./dataset/train', folder, 'images', ind + '.tif'))
